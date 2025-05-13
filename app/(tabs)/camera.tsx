@@ -1,92 +1,104 @@
-import PhotoPreviewSection from '@/components/PhotoPreviewSection';
-import { AntDesign } from '@expo/vector-icons';
-import { CameraType, CameraView, useCameraPermissions } from 'expo-camera';
-import { useRef, useState } from 'react';
-import { Button, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { CameraType, CameraView, useCameraPermissions, CameraCapturedPicture } from 'expo-camera';
 
-export default function Camera() {
-  const [facing, setFacing] = useState<CameraType>('back');
+const SUNUCU_URL = 'https://traffic-1-j4pi.onrender.com';
+
+export default function LiveCameraStream() {
   const [permission, requestPermission] = useCameraPermissions();
-  const [photo, setPhoto] = useState<any>(null);
   const cameraRef = useRef<CameraView | null>(null);
+  const [streaming, setStreaming] = useState(true);
+  const [serverResult, setServerResult] = useState<string | null>(null);
 
-  if (!permission) {
-    // Camera permissions are still loading.
-    return <View />;
-  }
-
-  if (!permission.granted) {
-    // Camera permissions are not granted yet.
-    return (
-      <View style={styles.container}>
-        <Text style={{ textAlign: 'center' }}>We need your permission to show the camera</Text>
-        <Button onPress={requestPermission} title="grant permission" />
-      </View>
-    );
-  }
-
-  function toggleCameraFacing() {
-    setFacing(current => (current === 'back' ? 'front' : 'back'));
-  }
-
-  const handleTakePhoto =  async () => {
-    if (cameraRef.current) {
-        const options = {
-            quality: 1,
-            base64: true,
-            exif: false,
-        };
-        const takedPhoto = await cameraRef.current.takePictureAsync(options);
-
-        setPhoto(takedPhoto);
+  useEffect(() => {
+    if (!permission?.granted) {
+      requestPermission();
     }
-  }; 
+  }, []);
 
-  const handleRetakePhoto = () => setPhoto(null);
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
 
-  if (photo) return <PhotoPreviewSection photo={photo} handleRetakePhoto={handleRetakePhoto} />
+    if (streaming && permission?.granted) {
+      interval = setInterval(() => {
+        captureAndSend();
+      }, 1000);
+    }
+
+    return () => clearInterval(interval);
+  }, [streaming, permission]);
+
+  const captureAndSend = async () => {
+    if (cameraRef.current) {
+      try {
+        const photo: CameraCapturedPicture = await cameraRef.current.takePictureAsync({
+          quality: 0.3,
+          skipProcessing: true,
+        });
+
+        if (!photo || !photo.uri) {
+          console.log('Fotoğraf alınamadı.');
+          return;
+        }
+
+        console.log('Fotoğraf alındı:', photo.uri);
+
+        const formData = new FormData();
+        formData.append('file', {
+          uri: photo.uri,
+          name: 'frame.jpg',
+          type: 'image/jpeg',
+        } as any);
+
+        const response = await fetch(`${SUNUCU_URL}/predict`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error('Sunucuya gönderim sırasında hata oluştu');
+        }
+
+        const result = await response.json();
+        console.log('Sunucudan gelen sonuç:', result);
+        setServerResult(JSON.stringify(result));
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Bilinmeyen hata';
+        console.log('Gönderim hatası:', errorMessage);
+        setServerResult('Gönderim hatası: ' + errorMessage);
+      }
+    }
+  };
+
+  if (!permission?.granted) {
+    return <Text>İzin gerekli</Text>;
+  }
 
   return (
-    <View style={styles.container}>
-      <CameraView style={styles.camera} facing={facing} ref={cameraRef}>
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.button} onPress={toggleCameraFacing}>
-            <AntDesign name='retweet' size={44} color='black' />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.button} onPress={handleTakePhoto}>
-            <AntDesign name='camera' size={44} color='black' />
-          </TouchableOpacity>
+    <View style={{ flex: 1 }}>
+      <CameraView ref={cameraRef} style={{ flex: 1 }} facing={'back'} />
+      {serverResult && (
+        <View style={styles.resultContainer}>
+          <Text style={styles.resultText}>{serverResult}</Text>
         </View>
-      </CameraView>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
+  resultContainer: {
+    position: 'absolute',
+    bottom: 20,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    padding: 10,
+    borderRadius: 8,
+    alignSelf: 'center',
   },
-  camera: {
-    flex: 1,
-  },
-  buttonContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    backgroundColor: 'transparent',
-    margin: 64,
-  },
-  button: {
-    flex: 1,
-    alignSelf: 'flex-end',
-    alignItems: 'center',
-    marginHorizontal: 10,
-    backgroundColor: 'gray',
-    borderRadius: 10,
-  },
-  text: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
+  resultText: {
+    color: '#fff',
   },
 });
